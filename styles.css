@@ -207,6 +207,13 @@ nav {
   justify-content: space-between;
 }
 
+.topbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .status {
   color: var(--muted);
   min-height: 22px;
@@ -254,6 +261,52 @@ nav {
 .list {
   display: grid;
   gap: 12px;
+}
+
+.toast-stack {
+  bottom: 22px;
+  display: grid;
+  gap: 12px;
+  max-width: min(380px, calc(100vw - 28px));
+  position: fixed;
+  right: 22px;
+  z-index: 50;
+}
+
+.toast {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--primary);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.toast.reward {
+  border-left-color: var(--info);
+}
+
+.toast-title {
+  font-weight: 850;
+  margin: 0;
+}
+
+.toast-message {
+  color: var(--muted);
+  margin: 0;
+}
+
+.toast-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.toast-actions button {
+  min-height: 34px;
+  padding: 7px 10px;
 }
 
 .item {
@@ -388,5 +441,18 @@ nav {
   .topbar,
   .item-head {
     display: grid;
+  }
+
+  .topbar-actions {
+    justify-content: stretch;
+  }
+
+  .topbar-actions button {
+    width: 100%;
+  }
+
+  .toast-stack {
+    bottom: 12px;
+    right: 14px;
   }
 }

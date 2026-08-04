@@ -41,6 +41,14 @@ const state = {
   profile: undefined,
   tab: "overview",
   unsubscribers: [],
+  realtimeReady: {
+    promotions: false,
+    rewards: false
+  },
+  seenPendingRequests: {
+    promotions: new Set(),
+    rewards: new Set()
+  },
   data: {
     users: [],
     businesses: [],
@@ -75,6 +83,8 @@ const loginForm = document.querySelector("#login-form");
 const loginError = document.querySelector("#login-error");
 const statusMessage = document.querySelector("#status-message");
 const pageTitle = document.querySelector("#page-title");
+const notificationButton = document.querySelector("#notification-button");
+const toastStack = document.querySelector("#toast-stack");
 
 loginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -90,6 +100,7 @@ loginForm.addEventListener("submit", async (event) => {
 
 document.querySelector("#logout-button").addEventListener("click", () => signOut(auth));
 document.querySelector("#refresh-button").addEventListener("click", () => loadAll());
+notificationButton?.addEventListener("click", () => requestBrowserNotifications());
 document.querySelectorAll(".tab").forEach((button) => {
   button.addEventListener("click", () => {
     state.tab = button.dataset.tab;
@@ -127,6 +138,7 @@ function showAuth() {
 function showDashboard() {
   authView.classList.add("hidden");
   dashboardView.classList.remove("hidden");
+  updateNotificationButton();
 }
 
 async function loadCollection(name, sorted = true) {
@@ -186,6 +198,8 @@ async function loadAll() {
 function startRealtime() {
   stopRealtime();
   statusMessage.textContent = "Escuchando cambios en vivo...";
+  state.realtimeReady = { promotions: false, rewards: false };
+  state.seenPendingRequests = { promotions: new Set(), rewards: new Set() };
   const collections = [
     ["users", "users"],
     ["businesses", "businesses"],
@@ -203,7 +217,9 @@ function startRealtime() {
     onSnapshot(
       query(collection(db, name), orderBy("createdAt", "desc"), limit(100)),
       (snapshot) => {
-        state.data[key] = snapshot.docs.map(normalizeDoc);
+        const items = snapshot.docs.map(normalizeDoc);
+        trackPendingRequestNotifications(key, items);
+        state.data[key] = items;
         statusMessage.textContent = `En vivo · último cambio ${new Date().toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
         render();
       },
@@ -217,6 +233,114 @@ function startRealtime() {
 function stopRealtime() {
   state.unsubscribers.forEach((unsubscribe) => unsubscribe());
   state.unsubscribers = [];
+}
+
+function trackPendingRequestNotifications(key, items) {
+  if (!["promotions", "rewards"].includes(key)) return;
+  const pending = items.filter((item) => item.status === "pending");
+  const seen = state.seenPendingRequests[key];
+  if (!state.realtimeReady[key]) {
+    pending.forEach((item) => seen.add(item.id));
+    state.realtimeReady[key] = true;
+    return;
+  }
+  const fresh = pending.filter((item) => !seen.has(item.id));
+  pending.forEach((item) => seen.add(item.id));
+  fresh.forEach((item) => notifyPendingRequest(key, item));
+}
+
+function notifyPendingRequest(key, item) {
+  const isReward = key === "rewards";
+  const type = isReward ? "recompensa" : "promoción";
+  const title = `Nueva solicitud de ${type}`;
+  const businessName = item.businessName ?? item.businessId ?? "Negocio";
+  const message = `${businessName}: ${item.title ?? "Solicitud pendiente"}`;
+  showToast({
+    title,
+    message,
+    variant: isReward ? "reward" : "promotion",
+    onAction: () => openRequestsSection()
+  });
+  showBrowserNotification(title, message);
+}
+
+function showToast({ title, message, variant, onAction }) {
+  if (!toastStack) return;
+  const toast = document.createElement("article");
+  toast.className = `toast ${variant ?? ""}`.trim();
+
+  const titleNode = document.createElement("p");
+  titleNode.className = "toast-title";
+  titleNode.textContent = title;
+
+  const messageNode = document.createElement("p");
+  messageNode.className = "toast-message";
+  messageNode.textContent = message;
+
+  const actions = document.createElement("div");
+  actions.className = "toast-actions";
+
+  const viewButton = document.createElement("button");
+  viewButton.type = "button";
+  viewButton.textContent = "Ver solicitudes";
+  viewButton.addEventListener("click", () => {
+    onAction?.();
+    toast.remove();
+  });
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.className = "secondary";
+  closeButton.textContent = "Cerrar";
+  closeButton.addEventListener("click", () => toast.remove());
+
+  actions.append(viewButton, closeButton);
+  toast.append(titleNode, messageNode, actions);
+  toastStack.prepend(toast);
+
+  while (toastStack.children.length > 4) {
+    toastStack.lastElementChild?.remove();
+  }
+  window.setTimeout(() => toast.remove(), 12000);
+}
+
+function openRequestsSection() {
+  state.tab = "requests";
+  render();
+  document.querySelector("#requests")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function requestBrowserNotifications() {
+  if (!("Notification" in window)) return;
+  const permission = await Notification.requestPermission();
+  updateNotificationButton();
+  if (permission === "granted") {
+    showToast({
+      title: "Avisos activados",
+      message: "Te avisaré cuando lleguen promociones o recompensas nuevas.",
+      onAction: () => openRequestsSection()
+    });
+  }
+}
+
+function updateNotificationButton() {
+  if (!notificationButton || !("Notification" in window)) return;
+  notificationButton.classList.toggle("hidden", Notification.permission === "granted");
+  notificationButton.disabled = Notification.permission === "denied";
+  notificationButton.textContent = Notification.permission === "denied" ? "Avisos bloqueados" : "Activar avisos";
+}
+
+function showBrowserNotification(title, message) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  const notification = new Notification(title, {
+    body: message,
+    tag: "pedidos-locales-solicitudes"
+  });
+  notification.onclick = () => {
+    window.focus();
+    openRequestsSection();
+    notification.close();
+  };
 }
 
 function normalizeDoc(snapshot) {
@@ -251,6 +375,10 @@ function shortDate(value) {
 function render() {
   document.querySelectorAll(".tab").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === state.tab);
+    if (button.dataset.tab === "requests") {
+      const count = pendingPromoRewardCount();
+      button.textContent = count ? `Solicitudes (${count})` : "Solicitudes";
+    }
   });
   document.querySelectorAll(".panel").forEach((panel) => {
     panel.classList.toggle("hidden", panel.id !== state.tab);
@@ -267,6 +395,11 @@ function render() {
   renderBusinesses();
   renderClients();
   renderRequests();
+}
+
+function pendingPromoRewardCount() {
+  return state.data.promotions.filter((item) => item.status === "pending").length
+    + state.data.rewards.filter((item) => item.status === "pending").length;
 }
 
 function renderOverview() {
