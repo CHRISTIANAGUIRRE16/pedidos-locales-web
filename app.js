@@ -114,6 +114,7 @@ onAuthStateChanged(auth, async (user) => {
   }
   state.profile = profile;
   showDashboard();
+  statusMessage.textContent = "Conectando datos en vivo...";
   await loadAll();
   startRealtime();
 });
@@ -184,6 +185,7 @@ async function loadAll() {
 
 function startRealtime() {
   stopRealtime();
+  statusMessage.textContent = "Escuchando cambios en vivo...";
   const collections = [
     ["users", "users"],
     ["businesses", "businesses"],
@@ -202,7 +204,7 @@ function startRealtime() {
       query(collection(db, name), orderBy("createdAt", "desc"), limit(100)),
       (snapshot) => {
         state.data[key] = snapshot.docs.map(normalizeDoc);
-        statusMessage.textContent = `En vivo · ${new Date().toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit" })}`;
+        statusMessage.textContent = `En vivo · último cambio ${new Date().toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
         render();
       },
       (error) => {
