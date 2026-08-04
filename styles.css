@@ -288,6 +288,18 @@ nav {
   border-left-color: var(--info);
 }
 
+.toast.order {
+  border-left-color: var(--warning);
+}
+
+.toast.business {
+  border-left-color: var(--primary);
+}
+
+.toast.danger {
+  border-left-color: var(--danger);
+}
+
 .toast-title {
   font-weight: 850;
   margin: 0;

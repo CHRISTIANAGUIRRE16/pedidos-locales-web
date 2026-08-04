@@ -41,14 +41,8 @@ const state = {
   profile: undefined,
   tab: "overview",
   unsubscribers: [],
-  realtimeReady: {
-    promotions: false,
-    rewards: false
-  },
-  seenPendingRequests: {
-    promotions: new Set(),
-    rewards: new Set()
-  },
+  realtimeReady: {},
+  seenAlerts: {},
   data: {
     users: [],
     businesses: [],
@@ -75,6 +69,58 @@ const labels = {
   approved: "Aprobado",
   active: "Activo",
   expired: "Expirado"
+};
+
+const alertConfigs = {
+  orders: {
+    tab: "orders",
+    variant: "order",
+    filter: (item) => item.status === "sent",
+    title: () => "Nuevo pedido",
+    message: (item) => `Pedido #${item.orderNumber ?? item.id.slice(0, 6)} · ${item.businessName ?? "Negocio"}`
+  },
+  applications: {
+    tab: "requests",
+    variant: "business",
+    filter: (item) => item.status === "pending",
+    title: () => "Nueva solicitud de negocio",
+    message: (item) => `${item.businessName ?? "Negocio"} · ${item.ownerName ?? item.fullName ?? "Dueño"}`
+  },
+  accountDeletionRequests: {
+    tab: "requests",
+    variant: "danger",
+    filter: (item) => item.status === "pending",
+    title: () => "Solicitud de eliminación de cuenta",
+    message: (item) => item.fullName ?? item.email ?? "Cliente"
+  },
+  businessDeletionRequests: {
+    tab: "requests",
+    variant: "danger",
+    filter: (item) => item.status === "pending",
+    title: () => "Solicitud de eliminación de negocio",
+    message: (item) => item.businessName ?? "Negocio"
+  },
+  promotions: {
+    tab: "requests",
+    variant: "promotion",
+    filter: (item) => item.status === "pending",
+    title: () => "Nueva solicitud de promoción",
+    message: (item) => `${item.businessName ?? item.businessId ?? "Negocio"}: ${item.title ?? "Promoción"}`
+  },
+  rewards: {
+    tab: "requests",
+    variant: "reward",
+    filter: (item) => item.status === "pending",
+    title: () => "Nueva solicitud de recompensa",
+    message: (item) => `${item.businessName ?? item.businessId ?? "Negocio"}: ${item.title ?? "Recompensa"}`
+  },
+  redemptions: {
+    tab: "requests",
+    variant: "reward",
+    filter: (item) => item.status === "pending",
+    title: () => "Nuevo canje pendiente",
+    message: (item) => `${item.clientName ?? "Cliente"} · ${item.rewardTitle ?? "Recompensa"}`
+  }
 };
 
 const authView = document.querySelector("#auth-view");
@@ -198,8 +244,8 @@ async function loadAll() {
 function startRealtime() {
   stopRealtime();
   statusMessage.textContent = "Escuchando cambios en vivo...";
-  state.realtimeReady = { promotions: false, rewards: false };
-  state.seenPendingRequests = { promotions: new Set(), rewards: new Set() };
+  state.realtimeReady = {};
+  state.seenAlerts = {};
   const collections = [
     ["users", "users"],
     ["businesses", "businesses"],
@@ -218,7 +264,7 @@ function startRealtime() {
       query(collection(db, name), orderBy("createdAt", "desc"), limit(100)),
       (snapshot) => {
         const items = snapshot.docs.map(normalizeDoc);
-        trackPendingRequestNotifications(key, items);
+        trackRealtimeAlerts(key, items);
         state.data[key] = items;
         statusMessage.textContent = `En vivo · último cambio ${new Date().toLocaleTimeString("es-EC", { hour: "2-digit", minute: "2-digit", second: "2-digit" })}`;
         render();
@@ -235,10 +281,12 @@ function stopRealtime() {
   state.unsubscribers = [];
 }
 
-function trackPendingRequestNotifications(key, items) {
-  if (!["promotions", "rewards"].includes(key)) return;
-  const pending = items.filter((item) => item.status === "pending");
-  const seen = state.seenPendingRequests[key];
+function trackRealtimeAlerts(key, items) {
+  const config = alertConfigs[key];
+  if (!config) return;
+  const pending = items.filter(config.filter);
+  const seen = state.seenAlerts[key] ?? new Set();
+  state.seenAlerts[key] = seen;
   if (!state.realtimeReady[key]) {
     pending.forEach((item) => seen.add(item.id));
     state.realtimeReady[key] = true;
@@ -246,25 +294,23 @@ function trackPendingRequestNotifications(key, items) {
   }
   const fresh = pending.filter((item) => !seen.has(item.id));
   pending.forEach((item) => seen.add(item.id));
-  fresh.forEach((item) => notifyPendingRequest(key, item));
+  fresh.forEach((item) => notifyRealtimeAlert(key, item, config));
 }
 
-function notifyPendingRequest(key, item) {
-  const isReward = key === "rewards";
-  const type = isReward ? "recompensa" : "promoción";
-  const title = `Nueva solicitud de ${type}`;
-  const businessName = item.businessName ?? item.businessId ?? "Negocio";
-  const message = `${businessName}: ${item.title ?? "Solicitud pendiente"}`;
+function notifyRealtimeAlert(key, item, config) {
+  const title = config.title(item);
+  const message = config.message(item);
   showToast({
     title,
     message,
-    variant: isReward ? "reward" : "promotion",
-    onAction: () => openRequestsSection()
+    variant: config.variant,
+    actionText: config.tab === "orders" ? "Ver pedidos" : "Ver solicitudes",
+    onAction: () => openPanelSection(config.tab)
   });
-  showBrowserNotification(title, message);
+  showBrowserNotification(title, message, `${key}-${item.id}`, config.tab);
 }
 
-function showToast({ title, message, variant, onAction }) {
+function showToast({ title, message, variant, actionText = "Ver", onAction }) {
   if (!toastStack) return;
   const toast = document.createElement("article");
   toast.className = `toast ${variant ?? ""}`.trim();
@@ -282,7 +328,7 @@ function showToast({ title, message, variant, onAction }) {
 
   const viewButton = document.createElement("button");
   viewButton.type = "button";
-  viewButton.textContent = "Ver solicitudes";
+  viewButton.textContent = actionText;
   viewButton.addEventListener("click", () => {
     onAction?.();
     toast.remove();
@@ -304,10 +350,10 @@ function showToast({ title, message, variant, onAction }) {
   window.setTimeout(() => toast.remove(), 12000);
 }
 
-function openRequestsSection() {
-  state.tab = "requests";
+function openPanelSection(tab) {
+  state.tab = tab;
   render();
-  document.querySelector("#requests")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  document.querySelector(`#${tab}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 async function requestBrowserNotifications() {
@@ -317,8 +363,8 @@ async function requestBrowserNotifications() {
   if (permission === "granted") {
     showToast({
       title: "Avisos activados",
-      message: "Te avisaré cuando lleguen promociones o recompensas nuevas.",
-      onAction: () => openRequestsSection()
+      message: "Te avisaré cuando lleguen pedidos, solicitudes, canjes, promociones y recompensas.",
+      onAction: () => openPanelSection("requests")
     });
   }
 }
@@ -330,15 +376,15 @@ function updateNotificationButton() {
   notificationButton.textContent = Notification.permission === "denied" ? "Avisos bloqueados" : "Activar avisos";
 }
 
-function showBrowserNotification(title, message) {
+function showBrowserNotification(title, message, tag = "pedidos-locales-panel", tab = "overview") {
   if (!("Notification" in window) || Notification.permission !== "granted") return;
   const notification = new Notification(title, {
     body: message,
-    tag: "pedidos-locales-solicitudes"
+    tag
   });
   notification.onclick = () => {
     window.focus();
-    openRequestsSection();
+    openPanelSection(tab);
     notification.close();
   };
 }
@@ -375,10 +421,7 @@ function shortDate(value) {
 function render() {
   document.querySelectorAll(".tab").forEach((button) => {
     button.classList.toggle("active", button.dataset.tab === state.tab);
-    if (button.dataset.tab === "requests") {
-      const count = pendingPromoRewardCount();
-      button.textContent = count ? `Solicitudes (${count})` : "Solicitudes";
-    }
+    button.textContent = tabLabel(button.dataset.tab);
   });
   document.querySelectorAll(".panel").forEach((panel) => {
     panel.classList.toggle("hidden", panel.id !== state.tab);
@@ -397,9 +440,26 @@ function render() {
   renderRequests();
 }
 
-function pendingPromoRewardCount() {
-  return state.data.promotions.filter((item) => item.status === "pending").length
-    + state.data.rewards.filter((item) => item.status === "pending").length;
+function tabLabel(tab) {
+  const labelsByTab = {
+    overview: "Resumen",
+    orders: "Pedidos",
+    businesses: "Negocios",
+    clients: "Clientes",
+    requests: "Solicitudes"
+  };
+  const count = tab === "orders" ? pendingOrdersCount() : tab === "requests" ? pendingRequestsCount() : 0;
+  return count ? `${labelsByTab[tab]} (${count})` : labelsByTab[tab];
+}
+
+function pendingOrdersCount() {
+  return state.data.orders.filter((item) => item.status === "sent").length;
+}
+
+function pendingRequestsCount() {
+  return Object.entries(alertConfigs)
+    .filter(([, config]) => config.tab === "requests")
+    .reduce((total, [key, config]) => total + (state.data[key] ?? []).filter(config.filter).length, 0);
 }
 
 function renderOverview() {
